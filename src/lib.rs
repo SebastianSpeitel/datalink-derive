@@ -1,0 +1,183 @@
+use proc_macro2::TokenStream;
+use quote::quote;
+use syn::{parse_macro_input, DeriveInput};
+
+#[proc_macro_derive(Data, attributes(data))]
+pub fn derive_data(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+
+    impl_derive_data(ast)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+fn impl_derive_data(ast: DeriveInput) -> syn::Result<TokenStream> {
+    let name = &ast.ident;
+
+    let (values, links) = match ast.data {
+        syn::Data::Struct(s) => gen_impls_for_struct(s)?,
+        syn::Data::Enum(_e) => todo!(),
+        syn::Data::Union(_) => todo!(),
+    };
+
+    Ok(quote! {
+        #[allow(unused_variables)]
+        impl ::datalink::data::Data for #name {
+            fn provide_value<'d>(&'d self, builder: &mut dyn ::datalink::value::ValueBuiler<'d>) {
+                use ::datalink::value::ValueType as _;
+                #values
+            }
+
+            fn provide_links(&self, builder: &mut dyn ::datalink::link_builder::LinkBuilder) -> Result<(),::datalink::link_builder::LinkBuilderError> {
+                use ::datalink::link_builder::LinkBuilderExt as _;
+                #links
+                builder.end()
+            }
+        }
+    })
+}
+
+fn gen_impls_for_struct(
+    data: syn::DataStruct,
+) -> syn::Result<(impl quote::ToTokens, impl quote::ToTokens)> {
+    let mut values = Vec::new();
+    let mut links = Vec::new();
+
+    for (field_index, field) in data.fields.into_iter().enumerate() {
+        let mut options = FieldOptions::default();
+
+        let default_key: syn::Expr = match &field.ident {
+            Some(ident) => {
+                let ident = ident.to_string();
+                syn::parse_quote!(#ident)
+            }
+            None => syn::parse_quote!(#field_index),
+        };
+        let default_target: syn::Expr = match &field.ident {
+            Some(ident) => syn::parse_quote!(self.#ident.to_owned()),
+            None => {
+                let index = syn::Index::from(field_index);
+                syn::parse_quote!(self.#index.to_owned())
+            }
+        };
+
+        for attr in field.attrs {
+            // This attribute is not for us
+            if !attr.path().is_ident("data") {
+                continue;
+            }
+
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("skip") {
+                    options.skip = true;
+                    return Ok(());
+                }
+                if meta.path.is_ident("link") {
+                    let mut key = default_key.clone();
+                    let mut target = default_target.clone();
+                    let mut id = None;
+                    meta.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("key") {
+                            key = meta.value()?.parse()?;
+                            return Ok(());
+                        }
+                        if meta.path.is_ident("target") {
+                            target = meta.value()?.parse()?;
+                            return Ok(());
+                        }
+                        if meta.path.is_ident("id") {
+                            id.replace(meta.value()?.parse()?);
+                            return Ok(());
+                        }
+
+                        Err(meta.error("unsupported property"))
+                    })?;
+                    options.links.push(LinkOptions { key, target, id });
+                    return Ok(());
+                }
+                if meta.path.is_ident("value") {
+                    // let ty: syn::Type = meta.value()?.parse()?;
+                    options.value = true;
+                    return Ok(());
+                }
+                Err(meta.error("unsupported property"))
+            })?;
+        }
+
+        if options.skip {
+            continue;
+        }
+
+        if options.value {
+            let ident = if let Some(ident) = field.ident {
+                quote!(self.#ident)
+            } else {
+                let index = syn::Index::from(field_index);
+                quote!(self.#index)
+            };
+            values.push(quote! {
+                #ident.provide_to(builder);
+            });
+        }
+
+        if options.links.is_empty() {
+            options.links.push(LinkOptions {
+                key: default_key,
+                target: default_target,
+                id: None,
+            });
+        }
+
+        for link in options.links.drain(..) {
+            let LinkOptions { key, target, id } = link;
+            if id.is_some() {
+                // unimplemented!("id")
+            }
+            links.push((key, target));
+        }
+    }
+
+    Ok((
+        gen_provide_values_impl(values),
+        gen_provide_links_impl(links),
+    ))
+}
+
+fn gen_provide_values_impl(
+    values: impl IntoIterator<Item = impl quote::ToTokens>,
+) -> impl quote::ToTokens {
+    values
+        .into_iter()
+        .map(|value| {
+            quote! {
+                #value
+            }
+        })
+        .collect::<proc_macro2::TokenStream>()
+}
+
+fn gen_provide_links_impl(
+    links: impl IntoIterator<Item = (impl quote::ToTokens, impl quote::ToTokens)>,
+) -> impl quote::ToTokens {
+    links
+        .into_iter()
+        .map(|(key, target)| {
+            quote! {
+                builder.push((#key, #target)).unwrap();
+            }
+        })
+        .collect::<proc_macro2::TokenStream>()
+}
+
+struct LinkOptions {
+    key: syn::Expr,
+    target: syn::Expr,
+    id: Option<syn::Expr>,
+}
+
+#[derive(Default)]
+struct FieldOptions {
+    skip: bool,
+    links: Vec<LinkOptions>,
+    value: bool,
+}
