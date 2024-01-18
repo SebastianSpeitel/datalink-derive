@@ -21,17 +21,18 @@ fn impl_derive_data(ast: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     Ok(quote! {
-        #[allow(unused_variables)]
         impl ::datalink::data::Data for #name {
+            #[allow(unused_variables)]
             fn provide_value<'d>(&'d self, builder: &mut dyn ::datalink::value::ValueBuiler<'d>) {
                 use ::datalink::value::ValueType as _;
                 #values
             }
 
-            fn provide_links(&self, builder: &mut dyn ::datalink::link_builder::LinkBuilder) -> Result<(),::datalink::link_builder::LinkBuilderError> {
-                use ::datalink::link_builder::LinkBuilderExt as _;
+            #[allow(unused_variables)]
+            fn provide_links(&self, links: &mut dyn ::datalink::links::Links) -> Result<(),::datalink::links::LinkError> {
+                use ::datalink::links::LinksExt as _;
                 #links
-                builder.end()
+                Ok(())
             }
         }
     })
@@ -163,7 +164,7 @@ fn gen_provide_links_impl(
         .into_iter()
         .map(|(key, target)| {
             quote! {
-                builder.push((#key, #target)).unwrap();
+                links.push((#key, #target)).unwrap();
             }
         })
         .collect::<proc_macro2::TokenStream>()
