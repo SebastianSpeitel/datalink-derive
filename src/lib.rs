@@ -164,7 +164,7 @@ fn gen_provide_links_impl(
         .into_iter()
         .map(|(key, target)| {
             quote! {
-                links.push((#key, #target)).unwrap();
+                links.push_link((#key, #target)).unwrap();
             }
         })
         .collect::<proc_macro2::TokenStream>()
