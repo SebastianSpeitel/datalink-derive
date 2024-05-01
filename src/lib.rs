@@ -23,8 +23,15 @@ fn impl_derive_data(ast: DeriveInput) -> syn::Result<TokenStream> {
     Ok(quote! {
         impl ::datalink::data::Data for #name {
             #[allow(unused_variables)]
-            fn provide_value<'d>(&'d self, builder: &mut dyn ::datalink::value::ValueBuiler<'d>) {
-                use ::datalink::value::ValueType as _;
+            #[inline]
+            fn provide_value(&self, mut request: ::datalink::value::ValueRequest) {
+                use ::datalink::value::Provided as _;
+                self.provide_requested(&mut request).debug_assert_provided();
+            }
+
+            #[allow(unused_variables)]
+            #[inline]
+            fn provide_requested<R: ::datalink::value::Req>(&self, request: &mut ::datalink::value::ValueRequest<R>) -> impl ::datalink::value::Provided {
                 #values
             }
 
@@ -117,7 +124,7 @@ fn gen_impls_for_struct(
                 quote!(self.#index)
             };
             values.push(quote! {
-                #ident.provide_to(builder);
+                request.provide_ref(&#ident);
             });
         }
 
