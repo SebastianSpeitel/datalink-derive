@@ -26,7 +26,7 @@ fn impl_derive_data(ast: DeriveInput) -> syn::Result<TokenStream> {
             #[inline]
             fn provide_value(&self, request: &mut ::datalink::value::ValueRequest) {
                 use ::datalink::value::Provided as _;
-                self.provide_requested(&mut request).debug_assert_provided();
+                self.provide_requested(request).debug_assert_provided();
             }
 
             #[allow(unused_variables)]
